@@ -15,6 +15,7 @@
 
 import os
 import warnings
+
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 from fire import Fire
@@ -26,7 +27,6 @@ from tensorflow.python.util import deprecation
 
 deprecation._PRINT_DEPRECATION_WARNINGS = False
 import tabnet_model
-
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ["KMP_AFFINITY"] = "none"
@@ -41,7 +41,6 @@ def pandas_input_fn(df,
                     shuffle,
                     batch_size,
                     n_buffer=50):
-
     dataframe = df.copy()
     labels = dataframe.pop(label_column)
     if dataset_info['task'] == 'classification':
@@ -72,39 +71,39 @@ def csv_input_fn(data_file,
                  batch_size,
                  n_buffer=50,
                  n_parallel=16):
-  """Function to read the input file and return the dataset."""
+    """Function to read the input file and return the dataset."""
 
-  def parse_csv(value_column):
-    columns = tf.decode_csv(value_column, record_defaults=defaults)
-    features = dict(zip(all_columns, columns))
-    label = features.pop(label_column)
-    classes = tf.cast(label, tf.int32) - 1
-    return features, classes
+    def parse_csv(value_column):
+        columns = tf.decode_csv(value_column, record_defaults=defaults)
+        features = dict(zip(all_columns, columns))
+        label = features.pop(label_column)
+        classes = tf.cast(label, tf.int32) - 1
+        return features, classes
 
-  # Extract lines from input files using the Dataset API.
-  dataset = tf.data.TextLineDataset(data_file)
+    # Extract lines from input files using the Dataset API.
+    dataset = tf.data.TextLineDataset(data_file)
 
-  if shuffle:
-    dataset = dataset.shuffle(buffer_size=n_buffer)
+    if shuffle:
+        dataset = dataset.shuffle(buffer_size=n_buffer)
 
-  dataset = dataset.map(parse_csv, num_parallel_calls=n_parallel)
+    dataset = dataset.map(parse_csv, num_parallel_calls=n_parallel)
 
-  # Repeat after shuffling, to prevent separate epochs from blending together.
-  dataset = dataset.repeat(num_epochs)
-  dataset = dataset.batch(batch_size)
-  return dataset
+    # Repeat after shuffling, to prevent separate epochs from blending together.
+    dataset = dataset.repeat(num_epochs)
+    dataset = dataset.batch(batch_size)
+    return dataset
 
 
-def prepare_dataset(df, categorical_features, target_name, task, embedding_dim=1):
-
+def prepare_dataset(df, categorical_suffix, target_name, task, embedding_dim=1):
     all_columns = df.columns
     label_column = target_name
-    if type(categorical_features) == str:
-        cat_columns = categorical_features.split(',')
-    elif type(categorical_features) == str:
-        cat_columns = list(categorical_features)
-    else:
-        cat_columns = categorical_features
+    # if type(categorical_features) == str:
+    #     cat_columns = categorical_features.split(',')
+    # elif type(categorical_features) == str:
+    #     cat_columns = list(categorical_features)
+    # else:
+    #     cat_columns = categorical_features
+    cat_columns = [col for col in df.columns if col.endswith(categorical_suffix)]
     num_columns = set(all_columns) - set(cat_columns) - {label_column}
     n_unique = {col: df[col].nunique() for col in cat_columns}
     emb_dim = {col: embedding_dim for col in cat_columns}
@@ -133,233 +132,234 @@ def prepare_dataset(df, categorical_features, target_name, task, embedding_dim=1
 
 
 def main(csv_path, target_name, task='classification', model_name='tabnet', tb_log_location='./tflog',
-         categorical_features=[], val_frac=0.25, test_frac=0.25,
+         categorical_suffix=None, val_frac=0.25, test_frac=0.25,
          emb_size=1, feature_dim=128, output_dim=64,
          batch_size=512, virtual_batch_size=512, batch_momentum=0.7,
          gamma=1.5, n_steps=6, max_steps=25, lr=0.02, decay_every=500, lambda_sparsity=0.0001):
+    all_data = pd.read_csv(csv_path)
+    trainval_df, test_df = train_test_split(all_data, test_size=test_frac, stratify=all_data[target_name])
+    val_frac_after_test_split = val_frac / (1 - test_frac)
+    train_df, val_df = train_test_split(trainval_df, test_size=val_frac_after_test_split)
 
-  all_data = pd.read_csv(csv_path)
-  trainval_df, test_df = train_test_split(all_data, test_size=test_frac, stratify=all_data[target_name])
-  val_frac_after_test_split = val_frac / (1 - test_frac)
-  train_df, val_df = train_test_split(trainval_df, test_size=val_frac_after_test_split)
+    dataset_info = prepare_dataset(all_data, categorical_suffix, target_name, task, embedding_dim=emb_size)
 
-  dataset_info = prepare_dataset(all_data, categorical_features, target_name, task, embedding_dim=emb_size)
+    print(dataset_info)
 
-  # TabNet model
-  tabnet = tabnet_model.TabNet(
-      columns=dataset_info['feature_columns'],
-      num_features=dataset_info['num_features'],
-      feature_dim=feature_dim,
-      output_dim=output_dim,
-      num_decision_steps=n_steps,
-      relaxation_factor=gamma,
-      batch_momentum=batch_momentum,
-      virtual_batch_size=virtual_batch_size,
-      num_classes=dataset_info['num_classes'])
+    # TabNet model
+    tabnet = tabnet_model.TabNet(
+        columns=dataset_info['feature_columns'],
+        num_features=dataset_info['num_features'],
+        feature_dim=feature_dim,
+        output_dim=output_dim,
+        num_decision_steps=n_steps,
+        relaxation_factor=gamma,
+        batch_momentum=batch_momentum,
+        virtual_batch_size=virtual_batch_size,
+        num_classes=dataset_info['num_classes'])
 
-  label_column = target_name
+    label_column = target_name
 
-  # Training parameters
-  max_steps = max_steps
-  display_step = 5
-  val_step = 5
-  save_step = 5
-  init_localearning_rate = lr
-  decay_every = decay_every
-  decay_rate = 0.95
-  batch_size = batch_size
-  sparsity_loss_weight = lambda_sparsity
-  gradient_thresh = 2000.0
+    # Training parameters
+    max_steps = max_steps
+    display_step = 5
+    val_step = 5
+    save_step = 5
+    init_localearning_rate = lr
+    decay_every = decay_every
+    decay_rate = 0.95
+    batch_size = batch_size
+    sparsity_loss_weight = lambda_sparsity
+    gradient_thresh = 2000.0
 
-  # Input sampling
-  train_batch = pandas_input_fn(
-      train_df,
-      label_column,
-      dataset_info,
-      num_epochs=100000,
-      shuffle=True,
-      batch_size=batch_size,
-      n_buffer=1)
-  val_batch = pandas_input_fn(
-      val_df,
-      label_column,
-      dataset_info,
-      num_epochs=10000,
-      shuffle=False,
-      batch_size=batch_size,
-      n_buffer=1)
-  test_batch = pandas_input_fn(
-      test_df,
-      label_column,
-      dataset_info,
-      num_epochs=10000,
-      shuffle=False,
-      batch_size=batch_size,
-      n_buffer=1)
+    # Input sampling
+    train_batch = pandas_input_fn(
+        train_df,
+        label_column,
+        dataset_info,
+        num_epochs=100000,
+        shuffle=True,
+        batch_size=batch_size,
+        n_buffer=1)
+    val_batch = pandas_input_fn(
+        val_df,
+        label_column,
+        dataset_info,
+        num_epochs=10000,
+        shuffle=False,
+        batch_size=batch_size,
+        n_buffer=1)
+    test_batch = pandas_input_fn(
+        test_df,
+        label_column,
+        dataset_info,
+        num_epochs=10000,
+        shuffle=False,
+        batch_size=batch_size,
+        n_buffer=1)
 
-  train_iter = train_batch.make_initializable_iterator()
-  val_iter = val_batch.make_initializable_iterator()
-  test_iter = test_batch.make_initializable_iterator()
+    train_iter = train_batch.make_initializable_iterator()
+    val_iter = val_batch.make_initializable_iterator()
+    test_iter = test_batch.make_initializable_iterator()
 
-  feature_train_batch, label_train_batch = train_iter.get_next()
-  feature_val_batch, label_val_batch = val_iter.get_next()
-  feature_test_batch, label_test_batch = test_iter.get_next()
+    feature_train_batch, label_train_batch = train_iter.get_next()
+    feature_val_batch, label_val_batch = val_iter.get_next()
+    feature_test_batch, label_test_batch = test_iter.get_next()
 
-  # Define the model and losses
+    # Define the model and losses
 
-  encoded_train_batch, total_entropy = tabnet.encoder(
-      feature_train_batch, is_training=True)
+    encoded_train_batch, total_entropy = tabnet.encoder(
+        feature_train_batch, is_training=True)
 
-  if task == 'classification':
+    if task == 'classification':
 
-      logits_orig_batch, _ = tabnet.classify(
-          encoded_train_batch)
+        logits_orig_batch, _ = tabnet.classify(
+            encoded_train_batch)
 
-      softmax_orig_key_op = tf.reduce_mean(
-          tf.nn.sparse_softmax_cross_entropy_with_logits(
-              logits=logits_orig_batch, labels=label_train_batch))
+        softmax_orig_key_op = tf.reduce_mean(
+            tf.nn.sparse_softmax_cross_entropy_with_logits(
+                logits=logits_orig_batch, labels=label_train_batch))
 
-      train_loss_op = softmax_orig_key_op + sparsity_loss_weight * total_entropy
+        train_loss_op = softmax_orig_key_op + sparsity_loss_weight * total_entropy
 
-  else:
+    else:
 
-      predictions = tabnet.regress(
-          encoded_train_batch
-      )
+        predictions = tabnet.regress(
+            encoded_train_batch
+        )
 
-      #l2_loss = tf.reduce_mean(
-      #    tf.nn.l2_loss(t = tf.subtract(predictions, label_train_batch)) / tf.to_float(tf.size(predictions))
-      #)
+        # l2_loss = tf.reduce_mean(
+        #    tf.nn.l2_loss(t = tf.subtract(predictions, label_train_batch)) / tf.to_float(tf.size(predictions))
+        # )
 
-      l2_loss = tf.reduce_mean(tf.square(tf.subtract(predictions, label_train_batch)))
+        l2_loss = tf.reduce_mean(tf.square(tf.subtract(predictions, label_train_batch)))
 
-      train_loss_op = l2_loss + sparsity_loss_weight * total_entropy
+        train_loss_op = l2_loss + sparsity_loss_weight * total_entropy
 
-  tf.compat.v1.summary.scalar("Total loss", train_loss_op)
+    tf.compat.v1.summary.scalar("Total loss", train_loss_op)
 
-  # Optimization step
-  global_step = tf.compat.v1.train.get_or_create_global_step()
-  learning_rate = tf.compat.v1.train.exponential_decay(
-      init_localearning_rate,
-      global_step=global_step,
-      decay_steps=decay_every,
-      decay_rate=decay_rate)
-  optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=learning_rate)
-  update_ops = tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.UPDATE_OPS)
-  with tf.control_dependencies(update_ops):
-    gvs = optimizer.compute_gradients(train_loss_op)
-    capped_gvs = [(tf.clip_by_value(grad, -gradient_thresh,
-                                    gradient_thresh), var) for grad, var in gvs]
-    train_op = optimizer.apply_gradients(capped_gvs, global_step=global_step)
+    # Optimization step
+    global_step = tf.compat.v1.train.get_or_create_global_step()
+    learning_rate = tf.compat.v1.train.exponential_decay(
+        init_localearning_rate,
+        global_step=global_step,
+        decay_steps=decay_every,
+        decay_rate=decay_rate)
+    optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=learning_rate)
+    update_ops = tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.UPDATE_OPS)
+    with tf.control_dependencies(update_ops):
+        gvs = optimizer.compute_gradients(train_loss_op)
+        capped_gvs = [(tf.clip_by_value(grad, -gradient_thresh,
+                                        gradient_thresh), var) for grad, var in gvs]
+        train_op = optimizer.apply_gradients(capped_gvs, global_step=global_step)
 
-  # Model evaluation
+    # Model evaluation
 
-  # Validation performance
-  encoded_val_batch, _ = tabnet.encoder(
-      feature_val_batch, is_training=True)
+    # Validation performance
+    encoded_val_batch, _ = tabnet.encoder(
+        feature_val_batch, is_training=True)
 
-  val_op = None
+    val_op = None
 
-  if task == 'classification':
-    _, prediction_val = tabnet.classify(
-        encoded_val_batch)
+    if task == 'classification':
+        _, prediction_val = tabnet.classify(
+            encoded_val_batch)
 
-    predicted_labels = tf.cast(tf.argmax(prediction_val, 1), dtype=tf.int32)
-    val_eq_op = tf.equal(predicted_labels, label_val_batch)
-    val_acc_op = tf.reduce_mean(tf.cast(val_eq_op, dtype=tf.float32))
-    tf.compat.v1.summary.scalar("Val accuracy", val_acc_op)
-    val_op = val_acc_op
+        predicted_labels = tf.cast(tf.argmax(prediction_val, 1), dtype=tf.int32)
+        val_eq_op = tf.equal(predicted_labels, label_val_batch)
+        val_acc_op = tf.reduce_mean(tf.cast(val_eq_op, dtype=tf.float32))
+        tf.compat.v1.summary.scalar("Val accuracy", val_acc_op)
+        val_op = val_acc_op
 
-  else:
-    predictions = tabnet.regress(
-          encoded_val_batch
-      )
+    else:
+        predictions = tabnet.regress(
+            encoded_val_batch
+        )
 
-    val_loss_op = tf.reduce_mean(tf.square(tf.subtract(predictions, label_train_batch)))
+        val_loss_op = tf.reduce_mean(tf.square(tf.subtract(predictions, label_train_batch)))
 
-    val_op = val_loss_op
-    tf.compat.v1.summary.scalar("Validation loss", val_loss_op)
+        val_op = val_loss_op
+        tf.compat.v1.summary.scalar("Validation loss", val_loss_op)
 
-  # Test performance
-  encoded_test_batch, _ = tabnet.encoder(
-      feature_test_batch, is_training=True)
-  test_op = None
+    # Test performance
+    encoded_test_batch, _ = tabnet.encoder(
+        feature_test_batch, is_training=True)
+    test_op = None
 
-  if task == 'classification':
-    _, prediction_test = tabnet.classify(
-        encoded_test_batch)
+    if task == 'classification':
+        _, prediction_test = tabnet.classify(
+            encoded_test_batch)
 
-    predicted_labels = tf.cast(tf.argmax(prediction_test, 1), dtype=tf.int32)
-    test_eq_op = tf.equal(predicted_labels, label_test_batch)
-    test_acc_op = tf.reduce_mean(tf.cast(test_eq_op, dtype=tf.float32))
-    tf.compat.v1.summary.scalar("Test accuracy", test_acc_op)
-    test_op = test_acc_op
+        predicted_labels = tf.cast(tf.argmax(prediction_test, 1), dtype=tf.int32)
+        test_eq_op = tf.equal(predicted_labels, label_test_batch)
+        test_acc_op = tf.reduce_mean(tf.cast(test_eq_op, dtype=tf.float32))
+        tf.compat.v1.summary.scalar("Test accuracy", test_acc_op)
+        test_op = test_acc_op
 
-  else:
-      predictions = tabnet.regress(
-          encoded_test_batch
-      )
+    else:
+        predictions = tabnet.regress(
+            encoded_test_batch
+        )
 
-      test_loss_op = tf.reduce_mean(tf.square(tf.subtract(predictions, label_test_batch)))
+        test_loss_op = tf.reduce_mean(tf.square(tf.subtract(predictions, label_test_batch)))
 
-      tf.compat.v1.summary.scalar("Test loss", test_loss_op)
-      test_op = test_loss_op
+        tf.compat.v1.summary.scalar("Test loss", test_loss_op)
+        test_op = test_loss_op
 
-  # Training setup
-  init = tf.initialize_all_variables()
-  init_local = tf.compat.v1.local_variables_initializer()
-  init_table = tf.compat.v1.tables_initializer(name="Initialize_all_tables")
-  saver = tf.compat.v1.train.Saver()
-  summaries = tf.compat.v1.summary.merge_all()
+    # Training setup
+    init = tf.initialize_all_variables()
+    init_local = tf.compat.v1.local_variables_initializer()
+    init_table = tf.compat.v1.tables_initializer(name="Initialize_all_tables")
+    saver = tf.compat.v1.train.Saver()
+    summaries = tf.compat.v1.summary.merge_all()
 
-  with tf.compat.v1.Session() as sess:
-    summary_writer = tf.compat.v1.summary.FileWriter(f'{tb_log_location}/{model_name}', sess.graph)
+    with tf.compat.v1.Session() as sess:
+        summary_writer = tf.compat.v1.summary.FileWriter(f'{tb_log_location}/{model_name}', sess.graph)
 
-    sess.run(init)
-    sess.run(init_local)
-    sess.run(init_table)
-    sess.run(train_iter.initializer)
-    sess.run(val_iter.initializer)
-    sess.run(test_iter.initializer)
+        sess.run(init)
+        sess.run(init_local)
+        sess.run(init_table)
+        sess.run(train_iter.initializer)
+        sess.run(val_iter.initializer)
+        sess.run(test_iter.initializer)
 
-    early_stop_steps = 25
-    best_val_acc = -1
+        early_stop_steps = 25
+        best_val_acc = -1
 
-    for step in range(1, max_steps + 1):
-      if step % display_step == 0:
-        _, train_loss, merged_summary = sess.run(
-            [train_op, train_loss_op, summaries])
-        summary_writer.add_summary(merged_summary, step)
-        print("Step " + str(step) + " , Training Loss = " +
-              "{:.4f}".format(train_loss))
-      else:
-        _ = sess.run(train_op)
+        for step in range(1, max_steps + 1):
+            if step % display_step == 0:
+                _, train_loss, merged_summary = sess.run(
+                    [train_op, train_loss_op, summaries])
+                summary_writer.add_summary(merged_summary, step)
+                print("Step " + str(step) + " , Training Loss = " +
+                      "{:.4f}".format(train_loss))
+            else:
+                _ = sess.run(train_op)
 
-      if step % val_step == 0:
-        feed_arr = [
-            vars()["summaries"],
-            vars()[f"val_op"],
-            vars()[f"test_op"]
-        ]
+            if step % val_step == 0:
+                feed_arr = [
+                    vars()["summaries"],
+                    vars()[f"val_op"],
+                    vars()[f"test_op"]
+                ]
 
-        val_arr = sess.run(feed_arr)
-        merged_summary = val_arr[0]
-        val_acc = val_arr[1]
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
-            best_val_step = step
-        if (step - best_val_step) > early_stop_steps:
-            break
+                val_arr = sess.run(feed_arr)
+                merged_summary = val_arr[0]
+                val_acc = val_arr[1]
+                if val_acc > best_val_acc:
+                    best_val_acc = val_acc
+                    best_val_step = step
+                if (step - best_val_step) > early_stop_steps:
+                    break
 
-        print("Step " + str(step) + " , Val Metric = " +
-              "{:.4f}".format(val_acc))
-        summary_writer.add_summary(merged_summary, step)
+                print("Step " + str(step) + " , Val Metric = " +
+                      "{:.4f}".format(val_acc))
+                summary_writer.add_summary(merged_summary, step)
 
-      if step % save_step == 0:
-        saver.save(sess, "./checkpoints/" + model_name + ".ckpt")
+            if step % save_step == 0:
+                saver.save(sess, "./checkpoints/" + model_name + ".ckpt")
 
-    print(f'Best validation accuracy: {best_val_acc}')
+        print(f'Best validation accuracy: {best_val_acc}')
 
 
 if __name__ == "__main__":
-  Fire(main)
+    Fire(main)

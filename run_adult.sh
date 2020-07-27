@@ -5,7 +5,7 @@ set -x
 python train_tabnet.py \
        --csv-path data/adult.csv \
        --target-name "<=50K" \
-       --categorical-features workclass,education,marital.status,occupation,relationship,race,sex,native.country \
+       --categorical-suffix "_cat" \
        --feature_dim 16 \
        --output_dim 16 \
        --batch-size 4096 \
