@@ -141,9 +141,12 @@ def main(csv_path, target_name, task='classification', model_name='tabnet', tb_l
     val_frac_after_test_split = val_frac / (1 - test_frac)
     train_df, val_df = train_test_split(trainval_df, test_size=val_frac_after_test_split)
 
-    dataset_info = prepare_dataset(all_data, categorical_suffix, target_name, task, embedding_dim=emb_size)
+    # save data sets
+    data_dir = os.path.dirname(csv_path)
+    for subset, label in zip((train_df, val_df, test_df), ('train', 'val', 'test')):
+        subset.to_csv(os.path.join(data_dir, f'{label}_set.csv'), index=False)
 
-    print(dataset_info)
+    dataset_info = prepare_dataset(all_data, categorical_suffix, target_name, task, embedding_dim=emb_size)
 
     # TabNet model
     tabnet = tabnet_model.TabNet(
@@ -212,12 +215,13 @@ def main(csv_path, target_name, task='classification', model_name='tabnet', tb_l
 
     if task == 'classification':
 
-        logits_orig_batch, _ = tabnet.classify(
+        logits_orig_batch, predictions_train = tabnet.classify(
             encoded_train_batch)
 
         softmax_orig_key_op = tf.reduce_mean(
             tf.nn.sparse_softmax_cross_entropy_with_logits(
                 logits=logits_orig_batch, labels=label_train_batch))
+
 
         train_loss_op = softmax_orig_key_op + sparsity_loss_weight * total_entropy
 
@@ -261,10 +265,10 @@ def main(csv_path, target_name, task='classification', model_name='tabnet', tb_l
     val_op = None
 
     if task == 'classification':
-        _, prediction_val = tabnet.classify(
+        _, predictions_val = tabnet.classify(
             encoded_val_batch)
 
-        predicted_labels = tf.cast(tf.argmax(prediction_val, 1), dtype=tf.int32)
+        predicted_labels = tf.cast(tf.argmax(predictions_val, 1), dtype=tf.int32)
         val_eq_op = tf.equal(predicted_labels, label_val_batch)
         val_acc_op = tf.reduce_mean(tf.cast(val_eq_op, dtype=tf.float32))
         tf.compat.v1.summary.scalar("Val accuracy", val_acc_op)
@@ -286,10 +290,10 @@ def main(csv_path, target_name, task='classification', model_name='tabnet', tb_l
     test_op = None
 
     if task == 'classification':
-        _, prediction_test = tabnet.classify(
+        _, predictions_test = tabnet.classify(
             encoded_test_batch)
 
-        predicted_labels = tf.cast(tf.argmax(prediction_test, 1), dtype=tf.int32)
+        predicted_labels = tf.cast(tf.argmax(predictions_test, 1), dtype=tf.int32)
         test_eq_op = tf.equal(predicted_labels, label_test_batch)
         test_acc_op = tf.reduce_mean(tf.cast(test_eq_op, dtype=tf.float32))
         tf.compat.v1.summary.scalar("Test accuracy", test_acc_op)
@@ -357,6 +361,16 @@ def main(csv_path, target_name, task='classification', model_name='tabnet', tb_l
 
             if step % save_step == 0:
                 saver.save(sess, "./checkpoints/" + model_name + ".ckpt")
+
+            # perform predictions on train, val and test and save them to file
+
+        train_preds = sess.run(predictions_train)
+        val_preds = sess.run(predictions_val)
+        test_preds = sess.run(predictions_test)
+
+        # save preds
+        for pred, label in zip((train_preds, val_preds, test_preds), ('train', 'val', 'test')):
+            pd.DataFrame(pred).to_csv(os.path.join(data_dir, f'{label}_pred.csv'), index=False)
 
         print(f'Best validation accuracy: {best_val_acc}')
 
