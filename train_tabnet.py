@@ -141,6 +141,11 @@ def main(csv_path, target_name, task='classification', model_name='tabnet', tb_l
     val_frac_after_test_split = val_frac / (1 - test_frac)
     train_df, val_df = train_test_split(trainval_df, test_size=val_frac_after_test_split)
 
+    print(f'Datasets sizes:')
+    print(f'Train: {train_df.shape}:')
+    print(f'Val: {val_df.shape}:')
+    print(f'Test: {test_df.shape}:')
+
     # save data sets
     data_dir = os.path.dirname(csv_path)
     for subset, label in zip((train_df, val_df, test_df), ('train', 'val', 'test')):
@@ -209,14 +214,16 @@ def main(csv_path, target_name, task='classification', model_name='tabnet', tb_l
     feature_test_batch, label_test_batch = test_iter.get_next()
 
     # Define the model and losses
-
+    # for training
     encoded_train_batch, total_entropy = tabnet.encoder(
         feature_train_batch, is_training=True)
 
-    if task == 'classification':
 
+    if task == 'classification':
+        
         logits_orig_batch, predictions_train = tabnet.classify(
             encoded_train_batch)
+
 
         softmax_orig_key_op = tf.reduce_mean(
             tf.nn.sparse_softmax_cross_entropy_with_logits(
@@ -261,6 +268,10 @@ def main(csv_path, target_name, task='classification', model_name='tabnet', tb_l
     # Validation performance
     encoded_val_batch, _ = tabnet.encoder(
         feature_val_batch, is_training=True)
+    
+
+
+
 
     val_op = None
 
@@ -346,9 +357,18 @@ def main(csv_path, target_name, task='classification', model_name='tabnet', tb_l
                     vars()[f"test_op"]
                 ]
 
+
                 val_arr = sess.run(feed_arr)
                 merged_summary = val_arr[0]
-                val_acc = val_arr[1]
+        
+                # this computes acc on one batch, we want it on all batches
+                # val_acc = val_arr[1]
+                test_acc_list = []
+                for i in range(len(test_df) // batch_size):
+                    test_acc_list.append(sess.run(test_acc_op))
+                val_acc = sum(test_acc_list) / len(test_acc_list)
+                
+
                 if val_acc > best_val_acc:
                     best_val_acc = val_acc
                     best_val_step = step
@@ -362,16 +382,22 @@ def main(csv_path, target_name, task='classification', model_name='tabnet', tb_l
             if step % save_step == 0:
                 saver.save(sess, "./checkpoints/" + model_name + ".ckpt")
 
-            # perform predictions on train, val and test and save them to file
-
-        train_preds = sess.run(predictions_train)
-        val_preds = sess.run(predictions_val)
-        test_preds = sess.run(predictions_test)
-
-        # save preds
-        for pred, label in zip((train_preds, val_preds, test_preds), ('train', 'val', 'test')):
-            pd.DataFrame(pred).to_csv(os.path.join(data_dir, f'{label}_pred.csv'), index=False)
-
+        # validate on test and dump results
+        print('Validating on test set ...')
+        predictions_test_list = []
+        test_acc_list = []
+        for i in range(len(test_df) // batch_size):
+            predictions_test_list.append(sess.run(predictions_test))
+            test_acc_list.append(sess.run(test_acc_op))
+        
+        predictions_test_concat = np.concatenate(predictions_test_list)
+        avg_acc = sum(test_acc_list) / len(test_acc_list)
+        print(f'Test predictions size: {predictions_test_concat.shape}')
+        print(f'Test set size: {len(test_df)}')
+        print(f'Did not preform inference on last {len(test_df) - predictions_test_concat.shape[0]} samples')
+        print(f'Avg. accuracy on test set: {round(avg_acc, 5)}')
+        print('Saving test predictions ...')
+        pd.DataFrame(predictions_test_concat).to_csv(os.path.join(data_dir, 'test_pred.csv'), index=False)
         print(f'Best validation accuracy: {best_val_acc}')
 
 
