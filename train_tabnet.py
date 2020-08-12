@@ -170,8 +170,8 @@ def main(csv_path, target_name, task='classification', model_name='tabnet', tb_l
     # Training parameters
     max_steps = max_steps
     display_step = 5
-    val_step = 5
-    save_step = 5
+    val_step = 100 
+    save_step = 100 
     init_localearning_rate = lr
     decay_every = decay_every
     decay_rate = 0.95
@@ -301,12 +301,14 @@ def main(csv_path, target_name, task='classification', model_name='tabnet', tb_l
     test_op = None
 
     if task == 'classification':
-        _, predictions_test = tabnet.classify(
+        logits_test, predictions_test = tabnet.classify(
             encoded_test_batch)
 
         predicted_labels = tf.cast(tf.argmax(predictions_test, 1), dtype=tf.int32)
         test_eq_op = tf.equal(predicted_labels, label_test_batch)
-        test_acc_op = tf.reduce_mean(tf.cast(test_eq_op, dtype=tf.float32))
+        test_acc_op = -tf.reduce_mean(
+            tf.nn.sparse_softmax_cross_entropy_with_logits(
+                logits=logits_test, labels=label_test_batch))
         tf.compat.v1.summary.scalar("Test accuracy", test_acc_op)
         test_op = test_acc_op
 
@@ -337,8 +339,8 @@ def main(csv_path, target_name, task='classification', model_name='tabnet', tb_l
         sess.run(val_iter.initializer)
         sess.run(test_iter.initializer)
 
-        early_stop_steps = 25
-        best_val_acc = -1
+        early_stop_steps = 100
+        best_val_acc = -1000.0
 
         for step in range(1, max_steps + 1):
             if step % display_step == 0:
