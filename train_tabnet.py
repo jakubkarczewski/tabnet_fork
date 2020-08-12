@@ -385,12 +385,16 @@ def main(csv_path, target_name, task='classification', model_name='tabnet', tb_l
         # validate on test and dump results
         print('Validating on test set ...')
         predictions_test_list = []
+        labels_test_list = []
         test_acc_list = []
         for i in range(len(test_df) // batch_size):
-            predictions_test_list.append(sess.run(predictions_test))
-            test_acc_list.append(sess.run(test_acc_op))
+            pr_test, label_test, test_acc = sess.run([predictions_test, label_test_batch, test_acc_op])
+            predictions_test_list.append(pr_test)
+            labels_test_list.append(label_test)
+            test_acc_list.append(test_acc)
         
         predictions_test_concat = np.concatenate(predictions_test_list)
+        labels_test_concat = np.concatenate(labels_test_list)
         avg_acc = sum(test_acc_list) / len(test_acc_list)
         print(f'Test predictions size: {predictions_test_concat.shape}')
         print(f'Test set size: {len(test_df)}')
@@ -398,6 +402,7 @@ def main(csv_path, target_name, task='classification', model_name='tabnet', tb_l
         print(f'Avg. accuracy on test set: {round(avg_acc, 5)}')
         print('Saving test predictions ...')
         pd.DataFrame(predictions_test_concat).to_csv(os.path.join(data_dir, 'test_pred.csv'), index=False)
+        pd.DataFrame(labels_test_concat).to_csv(os.path.join(data_dir, 'test_labels.csv'), index=False)
         print(f'Best validation accuracy: {best_val_acc}')
 
 
