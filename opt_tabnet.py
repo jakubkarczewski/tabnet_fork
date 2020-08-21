@@ -142,7 +142,7 @@ def train_and_evaluate(params,
     # Training parameters
     max_steps = max_steps
     display_step = 5
-    val_step = 5
+    val_step = 100
     init_localearning_rate = lr
     decay_every = decay_every
     decay_rate = 0.95
@@ -210,11 +210,14 @@ def train_and_evaluate(params,
         feature_val_batch, is_training=True)
 
     val_op = None
-    _, prediction_val = tabnet.classify(
+    logits_val, prediction_val = tabnet.classify(
         encoded_val_batch)
     predicted_labels = tf.cast(tf.argmax(prediction_val, 1), dtype=tf.int32)
     val_eq_op = tf.equal(predicted_labels, label_val_batch)
-    val_acc_op = tf.reduce_mean(tf.cast(val_eq_op, dtype=tf.float32))
+    val_acc_op = -tf.reduce_mean(
+        tf.nn.sparse_softmax_cross_entropy_with_logits(
+            logits=logits_val, labels=label_val_batch))
+
     val_op = val_acc_op
 
     # Training setup
@@ -230,8 +233,8 @@ def train_and_evaluate(params,
         sess.run(train_iter.initializer)
         sess.run(val_iter.initializer)
 
-        early_stop_steps = 25
-        best_val_acc = -1
+        early_stop_steps = 100
+        best_val_acc = -1000.0
 
         for step in range(1, max_steps + 1):
             if step % display_step == 0:
